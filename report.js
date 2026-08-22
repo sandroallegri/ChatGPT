@@ -1,5 +1,6 @@
 const scanButton = document.getElementById("scan");
 const stopButton = document.getElementById("stop");
+const hydrateButton = document.getElementById("hydrate");
 const exportButton = document.getElementById("export");
 const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
@@ -14,6 +15,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 scanButton.addEventListener("click", scanBookmarks);
 stopButton.addEventListener("click", stopScan);
+hydrateButton.addEventListener("click", hydrateMissingMetadata);
 exportButton.addEventListener("click", exportHtmlReport);
 
 async function scanBookmarks() {
@@ -33,7 +35,7 @@ async function scanBookmarks() {
       return;
     }
 
-    setStatus(`Trovati ${bookmarks.length} bookmark YouTube. Recupero metadati…`);
+    setStatus(`Trovati ${bookmarks.length} bookmark YouTube. Costruzione catalogo locale…`);
     lastResults = [];
 
     for (let index = 0; index < bookmarks.length; index += 1) {
@@ -43,15 +45,18 @@ async function scanBookmarks() {
       const videoId = getYouTubeVideoId(bookmark.url);
       const isNew = !isFirstRun && !knownVideoIds.has(videoId);
       const cachedMetadata = previousCatalog.items?.[videoId];
-      const metadata = cachedMetadata || (isNew ? await fetchVideoMetadata(bookmark, activeAbortController.signal) : buildBookmarkOnlyMetadata(bookmark));
+      const metadata = cachedMetadata || buildBookmarkOnlyMetadata(bookmark);
       lastResults.push({ ...metadata, isNew });
-      renderResults(sortResults(lastResults));
+      if (index > 0 && index % 250 === 0) {
+        setStatus(`Catalogati ${index}/${bookmarks.length} bookmark YouTube…`);
+        await waitForNextFrame();
+      }
     }
 
     lastResults = sortResults(lastResults);
     renderResults(lastResults);
     if (!activeAbortController.signal.aborted) {
-      await saveCatalog(bookmarks, lastResults);
+      await saveCatalog(bookmarks, lastResults, previousCatalog.items || {});
     }
     const activeCount = lastResults.filter((item) => item.active === true).length;
     const inactiveCount = lastResults.filter((item) => item.active === false).length;
@@ -84,13 +89,14 @@ async function loadCatalog() {
   return data.youtubeBookmarkCatalog;
 }
 
-async function saveCatalog(bookmarks, results) {
+async function saveCatalog(bookmarks, results, previousItems = {}) {
   const items = {};
   for (const result of results) {
     const videoId = getYouTubeVideoId(result.url);
     if (videoId) {
       const { isNew, ...metadata } = result;
-      items[videoId] = metadata;
+      const previous = previousItems[videoId];
+      items[videoId] = shouldKeepPreviousMetadata(previous, metadata) ? previous : metadata;
     }
   }
 
@@ -102,6 +108,42 @@ async function saveCatalog(bookmarks, results) {
       items
     }
   });
+}
+
+async function hydrateMissingMetadata() {
+  activeAbortController = new AbortController();
+  setBusy(true, "Aggiornamento controllato dei metadati mancanti…");
+
+  try {
+    const missingItems = lastResults
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.active === null)
+      .slice(0, 25);
+
+    for (let index = 0; index < missingItems.length; index += 1) {
+      if (activeAbortController.signal.aborted) break;
+      const { item, index: resultIndex } = missingItems[index];
+      setStatus(`Aggiornamento metadati ${index + 1}/${missingItems.length}: ${item.title}`);
+      lastResults[resultIndex] = { ...await fetchVideoMetadata(item, activeAbortController.signal), isNew: item.isNew };
+      renderResults(sortResults(lastResults));
+      await delay(3500, activeAbortController.signal);
+    }
+
+    const bookmarks = lastResults.map((item) => ({ url: item.url }));
+    const previousCatalog = await loadCatalog();
+    await saveCatalog(bookmarks, lastResults, previousCatalog.items || {});
+    setStatus(activeAbortController.signal.aborted ? "Aggiornamento interrotto." : "Aggiornamento metadati completato per questo blocco.");
+  } catch (error) {
+    if (error.name === "AbortError") {
+      setStatus("Aggiornamento interrotto.");
+    } else {
+      console.error(error);
+      setStatus(`Errore durante l'aggiornamento: ${error.message}`);
+    }
+  } finally {
+    setBusy(false);
+    activeAbortController = null;
+  }
 }
 
 function buildBookmarkOnlyMetadata(bookmark) {
@@ -117,6 +159,28 @@ function buildBookmarkOnlyMetadata(bookmark) {
     publishedAt: "Non verificata",
     url: bookmark.url
   };
+}
+
+function shouldKeepPreviousMetadata(previous, current) {
+  return Boolean(previous) && current.active === null && (
+    previous.active !== null ||
+    previous.author !== "Non verificato" ||
+    previous.views !== "Non verificate"
+  );
+}
+
+function waitForNextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timeoutId);
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
 }
 
 function sortResults(results) {
@@ -455,6 +519,7 @@ function escapeAttribute(value) {
 function setBusy(isBusy, message) {
   scanButton.disabled = isBusy;
   stopButton.disabled = !isBusy;
+  hydrateButton.disabled = isBusy || lastResults.every((item) => item.active !== null);
   if (message) setStatus(message);
 }
 

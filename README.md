@@ -11,7 +11,8 @@ Estensione Chrome Manifest V3 che scansiona ricorsivamente tutti i bookmark, tro
 - Permette di interrompere una scansione in corso con STOP.
 - Avvia automaticamente la scansione all’apertura del report.
 - Alla prima esecuzione crea il catalogo senza interrogare YouTube in massa, così evita blocchi anti-bot/captcha.
-- Dalle esecuzioni successive evidenzia i nuovi video con la colonna `New!`, li ordina in cima e recupera metadati solo per le novità o da cache locale.
+- Dalle esecuzioni successive evidenzia i nuovi video con la colonna `New!`, li ordina in cima e usa la cache locale per non perdere metadati già raccolti.
+- Permette di aggiornare manualmente i metadati mancanti in piccoli blocchi, con pausa tra una richiesta e l’altra, per ridurre il rischio captcha.
 - Permette di esportare il report come file HTML.
 
 ## Installazione locale
