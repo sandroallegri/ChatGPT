@@ -8,6 +8,7 @@ Estensione Chrome Manifest V3 che scansiona ricorsivamente tutti i bookmark, tro
 - Deduplica i video usando l'ID YouTube.
 - Mostra stato attivo/non attivo con pallino verde/rosso e valore `true`/`false`.
 - Mostra nome del video con link, autore e numero di visualizzazioni quando disponibili.
+- Permette di interrompere una scansione in corso con STOP.
 - Permette di esportare il report come file HTML.
 
 ## Installazione locale
