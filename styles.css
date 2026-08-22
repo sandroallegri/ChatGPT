@@ -1,0 +1,116 @@
+:root {
+  color-scheme: light dark;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  background: #f7f7fb;
+  color: #1f2937;
+}
+
+.popup {
+  width: 320px;
+  padding: 16px;
+}
+
+header,
+main {
+  margin: 0 auto 20px;
+  max-width: 1100px;
+}
+
+h1 {
+  margin-top: 0;
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+#status {
+  margin: 0 auto 16px;
+  max-width: 1100px;
+  min-height: 24px;
+}
+
+table {
+  border-collapse: collapse;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 10%);
+  margin: 0 auto;
+  max-width: 1100px;
+  overflow: hidden;
+  width: 100%;
+}
+
+th,
+td {
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 12px;
+  text-align: left;
+}
+
+th {
+  background: #111827;
+  color: white;
+}
+
+a {
+  color: #1d4ed8;
+}
+
+.empty {
+  color: #6b7280;
+  text-align: center;
+}
+
+.dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  width: 12px;
+}
+
+.green {
+  background: #16a34a;
+}
+
+.red {
+  background: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #111827;
+    color: #f9fafb;
+  }
+
+  td {
+    background: #1f2937;
+    border-color: #374151;
+  }
+
+  a {
+    color: #93c5fd;
+  }
+}

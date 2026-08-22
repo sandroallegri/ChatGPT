@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Bookmark Explorer",
+  "description": "Scans Chrome bookmarks for YouTube videos and builds a status table with metadata.",
+  "version": "1.0.0",
+  "permissions": [
+    "bookmarks",
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://youtu.be/*",
+    "https://m.youtube.com/*"
+  ],
+  "action": {
+    "default_title": "YouTube Bookmark Explorer",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
