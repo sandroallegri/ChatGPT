@@ -125,3 +125,9 @@ a {
 .description {
   max-width: 360px;
 }
+
+.new-label {
+  color: #f97316;
+  font-weight: 800;
+  text-transform: uppercase;
+}

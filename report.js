@@ -8,6 +8,10 @@ const resultsEl = document.getElementById("results");
 let lastResults = [];
 let activeAbortController = null;
 
+document.addEventListener("DOMContentLoaded", () => {
+  scanBookmarks();
+});
+
 scanButton.addEventListener("click", scanBookmarks);
 stopButton.addEventListener("click", stopScan);
 exportButton.addEventListener("click", exportHtmlReport);
@@ -16,8 +20,11 @@ async function scanBookmarks() {
   activeAbortController = new AbortController();
   setBusy(true, "Lettura dei bookmark…");
   try {
+    const previousCatalog = await loadCatalog();
     const tree = await chrome.bookmarks.getTree();
     const bookmarks = collectYouTubeBookmarks(tree);
+    const isFirstRun = !previousCatalog.initialized;
+    const knownVideoIds = new Set(previousCatalog.videoIds);
 
     if (bookmarks.length === 0) {
       lastResults = [];
@@ -34,12 +41,21 @@ async function scanBookmarks() {
       setStatus(`Analisi ${index + 1}/${bookmarks.length}: ${bookmark.title || bookmark.url}`);
       if (activeAbortController.signal.aborted) break;
       const metadata = await fetchVideoMetadata(bookmark, activeAbortController.signal);
-      lastResults.push(metadata);
-      renderResults(lastResults);
+      const videoId = getYouTubeVideoId(bookmark.url);
+      lastResults.push({ ...metadata, isNew: !isFirstRun && !knownVideoIds.has(videoId) });
+      renderResults(sortResults(lastResults));
     }
 
+    lastResults = sortResults(lastResults);
+    renderResults(lastResults);
+    if (!activeAbortController.signal.aborted) {
+      await saveCatalog(bookmarks);
+    }
     const activeCount = lastResults.filter((item) => item.active).length;
-    summaryEl.textContent = `${lastResults.length} video analizzati, ${activeCount} attivi e ${lastResults.length - activeCount} non attivi.`;
+    const newCount = lastResults.filter((item) => item.isNew).length;
+    summaryEl.textContent = isFirstRun
+      ? `${lastResults.length} video catalogati. Dalla prossima scansione evidenzierò solo le novità.`
+      : `${lastResults.length} video analizzati, ${newCount} novità, ${activeCount} attivi e ${lastResults.length - activeCount} non attivi.`;
     setStatus(activeAbortController.signal.aborted ? "Scansione interrotta." : "Scansione completata.");
   } catch (error) {
     if (error.name === "AbortError") {
@@ -57,6 +73,25 @@ async function scanBookmarks() {
 function stopScan() {
   activeAbortController?.abort();
   setStatus("Interruzione della scansione in corso…");
+}
+
+async function loadCatalog() {
+  const data = await chrome.storage.local.get({ youtubeBookmarkCatalog: { initialized: false, videoIds: [] } });
+  return data.youtubeBookmarkCatalog;
+}
+
+async function saveCatalog(bookmarks) {
+  await chrome.storage.local.set({
+    youtubeBookmarkCatalog: {
+      initialized: true,
+      updatedAt: new Date().toISOString(),
+      videoIds: bookmarks.map((bookmark) => getYouTubeVideoId(bookmark.url)).filter(Boolean)
+    }
+  });
+}
+
+function sortResults(results) {
+  return [...results].sort((left, right) => Number(right.isNew) - Number(left.isNew));
 }
 
 function collectYouTubeBookmarks(nodes, collected = []) {
@@ -289,7 +324,7 @@ function formatViews(value) {
 
 function renderResults(results) {
   if (results.length === 0) {
-    resultsEl.innerHTML = '<tr><td colspan="8" class="empty">Nessun risultato.</td></tr>';
+    resultsEl.innerHTML = '<tr><td colspan="9" class="empty">Nessun risultato.</td></tr>';
     exportButton.disabled = true;
     return;
   }
@@ -300,6 +335,10 @@ function renderResults(results) {
 
 function createResultRow(item) {
   const row = document.createElement("tr");
+  const newCell = document.createElement("td");
+  newCell.textContent = item.isNew ? "New!" : "";
+  newCell.className = item.isNew ? "new-label" : "";
+
   const activeCell = document.createElement("td");
   activeCell.innerHTML = `<span class="dot ${item.active ? "green" : "red"}" aria-label="${item.active ? "Attivo" : "Non attivo"}" title="${item.active ? "Attivo" : "Non attivo"}"></span>`;
 
@@ -338,13 +377,14 @@ function createResultRow(item) {
   const publishedAtCell = document.createElement("td");
   publishedAtCell.textContent = item.publishedAt;
 
-  row.append(activeCell, thumbnailCell, titleCell, authorCell, viewsCell, categoryCell, descriptionCell, publishedAtCell);
+  row.append(newCell, activeCell, thumbnailCell, titleCell, authorCell, viewsCell, categoryCell, descriptionCell, publishedAtCell);
   return row;
 }
 
 function exportHtmlReport() {
   const rows = lastResults.map((item) => `
     <tr>
+      <td class="${item.isNew ? "new-label" : ""}">${item.isNew ? "New!" : ""}</td>
       <td><span class="dot ${item.active ? "green" : "red"}" title="${item.active ? "Attivo" : "Non attivo"}"></span></td>
       <td>${item.thumbnail ? `<img class="thumbnail" src="${escapeAttribute(item.thumbnail)}" alt="Miniatura di ${escapeAttribute(item.title)}">` : "—"}</td>
       <td><a href="${escapeAttribute(item.url)}">${escapeHtml(item.title)}</a></td>
@@ -357,7 +397,7 @@ function exportHtmlReport() {
   const styles = [...document.styleSheets]
     .map((sheet) => [...sheet.cssRules].map((rule) => rule.cssText).join("\n"))
     .join("\n");
-  const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Report YouTube Bookmark</title><style>${styles}</style></head><body><h1>Report YouTube Bookmark</h1><table><thead><tr><th>Attivo</th><th>Miniatura</th><th>Nome video</th><th>Autore</th><th>Visualizzazioni</th><th>Tema</th><th>Descrizione</th><th>Pubblicato</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Report YouTube Bookmark</title><style>${styles}</style></head><body><h1>Report YouTube Bookmark</h1><table><thead><tr><th>New!</th><th>Attivo</th><th>Miniatura</th><th>Nome video</th><th>Autore</th><th>Visualizzazioni</th><th>Tema</th><th>Descrizione</th><th>Pubblicato</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
   const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
   chrome.downloads?.download?.({ url, filename: "youtube-bookmark-report.html", saveAs: true }) || window.open(url);
 }
