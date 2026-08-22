@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YouTube Bookmark Explorer",
   "description": "Scans Chrome bookmarks for YouTube videos and builds a status table with metadata.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "permissions": [
     "bookmarks",
     "storage",

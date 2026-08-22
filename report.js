@@ -146,9 +146,9 @@ async function fetchVideoMetadata(bookmark, signal) {
       author: decodeHtmlEntities(author),
       views,
       thumbnail,
-      description: decodeHtmlEntities(description),
+      description: summarizeWords(decodeHtmlEntities(description), 30),
       category: decodeHtmlEntities(category),
-      publishedAt,
+      publishedAt: formatDate(publishedAt),
       url: bookmark.url
     };
   } catch (error) {
@@ -264,6 +264,23 @@ function getText(value) {
   return "";
 }
 
+function summarizeWords(value, maxWords) {
+  const words = String(value).trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return words.join(" ");
+  return `${words.slice(0, maxWords).join(" ")}…`;
+}
+
+function formatDate(value) {
+  if (!value || value === "Non disponibile") return "Non disponibile";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(date);
+}
+
 function formatViews(value) {
   if (!value) return "";
   const number = Number(String(value).replace(/\D/g, ""));
@@ -284,7 +301,7 @@ function renderResults(results) {
 function createResultRow(item) {
   const row = document.createElement("tr");
   const activeCell = document.createElement("td");
-  activeCell.innerHTML = `<span class="dot ${item.active ? "green" : "red"}" aria-hidden="true"></span>${item.active}`;
+  activeCell.innerHTML = `<span class="dot ${item.active ? "green" : "red"}" aria-label="${item.active ? "Attivo" : "Non attivo"}" title="${item.active ? "Attivo" : "Non attivo"}"></span>`;
 
   const thumbnailCell = document.createElement("td");
   if (item.thumbnail) {
@@ -328,7 +345,7 @@ function createResultRow(item) {
 function exportHtmlReport() {
   const rows = lastResults.map((item) => `
     <tr>
-      <td><span class="dot ${item.active ? "green" : "red"}"></span>${item.active}</td>
+      <td><span class="dot ${item.active ? "green" : "red"}" title="${item.active ? "Attivo" : "Non attivo"}"></span></td>
       <td>${item.thumbnail ? `<img class="thumbnail" src="${escapeAttribute(item.thumbnail)}" alt="Miniatura di ${escapeAttribute(item.title)}">` : "—"}</td>
       <td><a href="${escapeAttribute(item.url)}">${escapeHtml(item.title)}</a></td>
       <td>${escapeHtml(item.author)}</td>
