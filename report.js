@@ -1,6 +1,7 @@
 const scanButton = document.getElementById("scan");
 const stopButton = document.getElementById("stop");
 const hydrateButton = document.getElementById("hydrate");
+const resetButton = document.getElementById("reset");
 const exportButton = document.getElementById("export");
 const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
@@ -16,6 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
 scanButton.addEventListener("click", scanBookmarks);
 stopButton.addEventListener("click", stopScan);
 hydrateButton.addEventListener("click", hydrateMissingMetadata);
+resetButton.addEventListener("click", resetCatalog);
 exportButton.addEventListener("click", exportHtmlReport);
 
 async function scanBookmarks() {
@@ -118,13 +120,14 @@ async function hydrateMissingMetadata() {
     const missingItems = lastResults
       .map((item, index) => ({ item, index }))
       .filter(({ item }) => item.active === null)
+      .sort((left, right) => getHydrationTime(left.item) - getHydrationTime(right.item))
       .slice(0, 25);
 
     for (let index = 0; index < missingItems.length; index += 1) {
       if (activeAbortController.signal.aborted) break;
       const { item, index: resultIndex } = missingItems[index];
       setStatus(`Aggiornamento metadati ${index + 1}/${missingItems.length}: ${item.title}`);
-      lastResults[resultIndex] = { ...await fetchVideoMetadata(item, activeAbortController.signal), isNew: item.isNew };
+      lastResults[resultIndex] = { ...await fetchVideoMetadata(item, activeAbortController.signal), isNew: item.isNew, lastHydratedAt: new Date().toISOString() };
       renderResults(sortResults(lastResults));
       await delay(3500, activeAbortController.signal);
     }
@@ -146,6 +149,16 @@ async function hydrateMissingMetadata() {
   }
 }
 
+async function resetCatalog() {
+  if (!confirm("Vuoi cancellare il catalogo salvato e ripartire da zero?")) return;
+  await chrome.storage.local.remove("youtubeBookmarkCatalog");
+  lastResults = [];
+  renderResults([]);
+  summaryEl.textContent = "Catalogo resettato. Avvio una nuova scansione iniziale…";
+  setStatus("Catalogo resettato.");
+  scanBookmarks();
+}
+
 function buildBookmarkOnlyMetadata(bookmark) {
   const videoId = getYouTubeVideoId(bookmark.url);
   return {
@@ -157,8 +170,13 @@ function buildBookmarkOnlyMetadata(bookmark) {
     description: "Metadati non recuperati per evitare blocchi anti-bot di YouTube.",
     category: "Non verificato",
     publishedAt: "Non verificata",
+    lastHydratedAt: "",
     url: bookmark.url
   };
+}
+
+function getHydrationTime(item) {
+  return item.lastHydratedAt ? new Date(item.lastHydratedAt).getTime() : 0;
 }
 
 function shouldKeepPreviousMetadata(previous, current) {
@@ -267,7 +285,7 @@ async function fetchVideoMetadata(bookmark, signal) {
     const captchaDetected = /captcha|unusual traffic|sorry\/index|detected unusual/i.test(pageData.html);
     const explicitlyUnavailable = playability === "ERROR" || playability === "LOGIN_REQUIRED";
     const explicitlyPlayable = playability === "OK" || Boolean(oEmbedData?.html) || Boolean(titleFromRemote);
-    const isActive = captchaDetected ? null : (explicitlyUnavailable ? false : pageData.ok && explicitlyPlayable);
+    const isActive = captchaDetected && !oEmbedData?.html ? null : (explicitlyUnavailable ? false : pageData.ok && explicitlyPlayable);
 
     return {
       active: isActive,
@@ -278,6 +296,7 @@ async function fetchVideoMetadata(bookmark, signal) {
       description: summarizeWords(decodeHtmlEntities(description), 30),
       category: decodeHtmlEntities(category),
       publishedAt: formatDate(publishedAt),
+      lastHydratedAt: new Date().toISOString(),
       url: bookmark.url
     };
   } catch (error) {
@@ -520,6 +539,7 @@ function setBusy(isBusy, message) {
   scanButton.disabled = isBusy;
   stopButton.disabled = !isBusy;
   hydrateButton.disabled = isBusy || lastResults.every((item) => item.active !== null);
+  resetButton.disabled = isBusy;
   if (message) setStatus(message);
 }
 
