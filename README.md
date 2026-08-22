@@ -7,7 +7,7 @@ Estensione Chrome Manifest V3 che scansiona ricorsivamente tutti i bookmark, tro
 - Riconosce URL `youtube.com/watch`, `youtube.com/shorts`, `youtube.com/embed` e `youtu.be`.
 - Deduplica i video usando l'ID YouTube.
 - Mostra stato attivo/non attivo con pallino verde/rosso e valore `true`/`false`.
-- Mostra nome del video con link, autore e numero di visualizzazioni quando disponibili.
+- Mostra nome del video con link, autore, numero di visualizzazioni, tema, miniatura, descrizione e data di pubblicazione quando disponibili.
 - Permette di interrompere una scansione in corso con STOP.
 - Permette di esportare il report come file HTML.
 
@@ -18,3 +18,7 @@ Estensione Chrome Manifest V3 che scansiona ricorsivamente tutti i bookmark, tro
 3. Clicca “Carica estensione non pacchettizzata”.
 4. Seleziona questa cartella.
 5. Apri l'estensione e premi “Apri report”.
+
+## Versionamento
+
+A ogni modifica del repository va incrementata la versione dell'estensione nel `manifest.json` (es. `1.0.1`, `1.0.2`, ...).

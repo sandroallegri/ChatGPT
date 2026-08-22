@@ -112,6 +112,10 @@ async function fetchVideoMetadata(bookmark, signal) {
     title: bookmark.title || "Titolo non disponibile",
     author: "Autore non disponibile",
     views: "Non disponibili",
+    thumbnail: "",
+    description: "Descrizione non disponibile",
+    category: "Tema non disponibile",
+    publishedAt: "Non disponibile",
     url: bookmark.url
   };
 
@@ -128,10 +132,25 @@ async function fetchVideoMetadata(bookmark, signal) {
     const title = titleFromRemote || fallback.title;
     const author = details?.author || microformat?.ownerChannelName || oEmbedData?.author_name || pageData.author || fallback.author;
     const views = formatViews(details?.viewCount || microformat?.viewCount || pageData.views) || fallback.views;
-    const unavailable = playability === "ERROR" || playability === "LOGIN_REQUIRED" || /video unavailable|this video is unavailable|video non disponibile/i.test(pageData.html);
-    const isActive = pageData.ok && !unavailable && Boolean(titleFromRemote || oEmbedData?.html);
+    const description = getText(microformat?.description) || details?.shortDescription || pageData.description || fallback.description;
+    const thumbnail = getBestThumbnail(details?.thumbnail?.thumbnails || microformat?.thumbnail?.thumbnails) || oEmbedData?.thumbnail_url || pageData.thumbnail || fallback.thumbnail;
+    const category = microformat?.category || details?.keywords?.slice(0, 3).join(", ") || pageData.keywords || fallback.category;
+    const publishedAt = microformat?.publishDate || microformat?.uploadDate || pageData.publishedAt || fallback.publishedAt;
+    const explicitlyUnavailable = playability === "ERROR" || playability === "LOGIN_REQUIRED";
+    const explicitlyPlayable = playability === "OK" || Boolean(oEmbedData?.html) || Boolean(titleFromRemote);
+    const isActive = explicitlyUnavailable ? false : pageData.ok && explicitlyPlayable;
 
-    return { active: isActive, title: decodeHtmlEntities(title), author: decodeHtmlEntities(author), views, url: bookmark.url };
+    return {
+      active: isActive,
+      title: decodeHtmlEntities(title),
+      author: decodeHtmlEntities(author),
+      views,
+      thumbnail,
+      description: decodeHtmlEntities(description),
+      category: decodeHtmlEntities(category),
+      publishedAt,
+      url: bookmark.url
+    };
   } catch (error) {
     if (error.name === "AbortError") throw error;
     return { ...fallback, error: error.message };
@@ -145,8 +164,12 @@ async function fetchWatchPageData(url, signal) {
     ok: response.ok,
     html,
     title: getMetaContent(html, "title") || getMetaContent(html, "og:title"),
-    author: getMetaContent(html, "author") || getMetaContent(html, "og:video:tag"),
-    views: getMetaContent(html, "interactionCount") || findFirstMatch(html, /"viewCount"\s*:\s*"?(\d+)"?/)
+    author: getMetaContent(html, "author"),
+    views: getMetaContent(html, "interactionCount") || findFirstMatch(html, /"viewCount"\s*:\s*"?(\d+)"?/),
+    thumbnail: getMetaContent(html, "og:image"),
+    description: getMetaContent(html, "description") || getMetaContent(html, "og:description"),
+    keywords: getMetaContent(html, "keywords"),
+    publishedAt: getMetaContent(html, "datePublished") || getMetaContent(html, "uploadDate")
   };
 }
 
@@ -229,6 +252,18 @@ function decodeHtmlEntities(value) {
   return textArea.value;
 }
 
+function getBestThumbnail(thumbnails = []) {
+  return [...thumbnails].sort((left, right) => (right.width || 0) - (left.width || 0))[0]?.url || "";
+}
+
+function getText(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (value.simpleText) return value.simpleText;
+  if (Array.isArray(value.runs)) return value.runs.map((run) => run.text).join("");
+  return "";
+}
+
 function formatViews(value) {
   if (!value) return "";
   const number = Number(String(value).replace(/\D/g, ""));
@@ -237,7 +272,7 @@ function formatViews(value) {
 
 function renderResults(results) {
   if (results.length === 0) {
-    resultsEl.innerHTML = '<tr><td colspan="4" class="empty">Nessun risultato.</td></tr>';
+    resultsEl.innerHTML = '<tr><td colspan="8" class="empty">Nessun risultato.</td></tr>';
     exportButton.disabled = true;
     return;
   }
@@ -250,6 +285,17 @@ function createResultRow(item) {
   const row = document.createElement("tr");
   const activeCell = document.createElement("td");
   activeCell.innerHTML = `<span class="dot ${item.active ? "green" : "red"}" aria-hidden="true"></span>${item.active}`;
+
+  const thumbnailCell = document.createElement("td");
+  if (item.thumbnail) {
+    const image = document.createElement("img");
+    image.className = "thumbnail";
+    image.src = item.thumbnail;
+    image.alt = `Miniatura di ${item.title}`;
+    thumbnailCell.append(image);
+  } else {
+    thumbnailCell.textContent = "—";
+  }
 
   const titleCell = document.createElement("td");
   const link = document.createElement("a");
@@ -265,7 +311,17 @@ function createResultRow(item) {
   const viewsCell = document.createElement("td");
   viewsCell.textContent = item.views;
 
-  row.append(activeCell, titleCell, authorCell, viewsCell);
+  const categoryCell = document.createElement("td");
+  categoryCell.textContent = item.category;
+
+  const descriptionCell = document.createElement("td");
+  descriptionCell.className = "description";
+  descriptionCell.textContent = item.description;
+
+  const publishedAtCell = document.createElement("td");
+  publishedAtCell.textContent = item.publishedAt;
+
+  row.append(activeCell, thumbnailCell, titleCell, authorCell, viewsCell, categoryCell, descriptionCell, publishedAtCell);
   return row;
 }
 
@@ -273,14 +329,18 @@ function exportHtmlReport() {
   const rows = lastResults.map((item) => `
     <tr>
       <td><span class="dot ${item.active ? "green" : "red"}"></span>${item.active}</td>
+      <td>${item.thumbnail ? `<img class="thumbnail" src="${escapeAttribute(item.thumbnail)}" alt="Miniatura di ${escapeAttribute(item.title)}">` : "—"}</td>
       <td><a href="${escapeAttribute(item.url)}">${escapeHtml(item.title)}</a></td>
       <td>${escapeHtml(item.author)}</td>
       <td>${escapeHtml(item.views)}</td>
+      <td>${escapeHtml(item.category)}</td>
+      <td>${escapeHtml(item.description)}</td>
+      <td>${escapeHtml(item.publishedAt)}</td>
     </tr>`).join("");
   const styles = [...document.styleSheets]
     .map((sheet) => [...sheet.cssRules].map((rule) => rule.cssText).join("\n"))
     .join("\n");
-  const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Report YouTube Bookmark</title><style>${styles}</style></head><body><h1>Report YouTube Bookmark</h1><table><thead><tr><th>Attivo</th><th>Nome video</th><th>Autore</th><th>Visualizzazioni</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Report YouTube Bookmark</title><style>${styles}</style></head><body><h1>Report YouTube Bookmark</h1><table><thead><tr><th>Attivo</th><th>Miniatura</th><th>Nome video</th><th>Autore</th><th>Visualizzazioni</th><th>Tema</th><th>Descrizione</th><th>Pubblicato</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
   const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
   chrome.downloads?.download?.({ url, filename: "youtube-bookmark-report.html", saveAs: true }) || window.open(url);
 }

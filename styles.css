@@ -114,3 +114,14 @@ a {
     color: #93c5fd;
   }
 }
+
+.thumbnail {
+  border-radius: 6px;
+  display: block;
+  height: auto;
+  max-width: 140px;
+}
+
+.description {
+  max-width: 360px;
+}
