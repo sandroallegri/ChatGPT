@@ -10,7 +10,8 @@ Estensione Chrome Manifest V3 che scansiona ricorsivamente tutti i bookmark, tro
 - Mostra nome del video con link, autore, numero di visualizzazioni, tema, miniatura, descrizione e data di pubblicazione quando disponibili.
 - Permette di interrompere una scansione in corso con STOP.
 - Avvia automaticamente la scansione all’apertura del report.
-- Alla prima esecuzione crea il catalogo; dalle successive evidenzia i nuovi video con la colonna `New!` e li ordina in cima.
+- Alla prima esecuzione crea il catalogo senza interrogare YouTube in massa, così evita blocchi anti-bot/captcha.
+- Dalle esecuzioni successive evidenzia i nuovi video con la colonna `New!`, li ordina in cima e recupera metadati solo per le novità o da cache locale.
 - Permette di esportare il report come file HTML.
 
 ## Installazione locale

@@ -40,22 +40,26 @@ async function scanBookmarks() {
       const bookmark = bookmarks[index];
       setStatus(`Analisi ${index + 1}/${bookmarks.length}: ${bookmark.title || bookmark.url}`);
       if (activeAbortController.signal.aborted) break;
-      const metadata = await fetchVideoMetadata(bookmark, activeAbortController.signal);
       const videoId = getYouTubeVideoId(bookmark.url);
-      lastResults.push({ ...metadata, isNew: !isFirstRun && !knownVideoIds.has(videoId) });
+      const isNew = !isFirstRun && !knownVideoIds.has(videoId);
+      const cachedMetadata = previousCatalog.items?.[videoId];
+      const metadata = cachedMetadata || (isNew ? await fetchVideoMetadata(bookmark, activeAbortController.signal) : buildBookmarkOnlyMetadata(bookmark));
+      lastResults.push({ ...metadata, isNew });
       renderResults(sortResults(lastResults));
     }
 
     lastResults = sortResults(lastResults);
     renderResults(lastResults);
     if (!activeAbortController.signal.aborted) {
-      await saveCatalog(bookmarks);
+      await saveCatalog(bookmarks, lastResults);
     }
-    const activeCount = lastResults.filter((item) => item.active).length;
+    const activeCount = lastResults.filter((item) => item.active === true).length;
+    const inactiveCount = lastResults.filter((item) => item.active === false).length;
+    const unknownCount = lastResults.filter((item) => item.active === null).length;
     const newCount = lastResults.filter((item) => item.isNew).length;
     summaryEl.textContent = isFirstRun
-      ? `${lastResults.length} video catalogati. Dalla prossima scansione evidenzierò solo le novità.`
-      : `${lastResults.length} video analizzati, ${newCount} novità, ${activeCount} attivi e ${lastResults.length - activeCount} non attivi.`;
+      ? `${lastResults.length} video catalogati senza interrogare YouTube in massa. Dalla prossima scansione evidenzierò le novità.`
+      : `${lastResults.length} video analizzati, ${newCount} novità, ${activeCount} attivi, ${inactiveCount} non attivi e ${unknownCount} non verificati.`;
     setStatus(activeAbortController.signal.aborted ? "Scansione interrotta." : "Scansione completata.");
   } catch (error) {
     if (error.name === "AbortError") {
@@ -80,14 +84,39 @@ async function loadCatalog() {
   return data.youtubeBookmarkCatalog;
 }
 
-async function saveCatalog(bookmarks) {
+async function saveCatalog(bookmarks, results) {
+  const items = {};
+  for (const result of results) {
+    const videoId = getYouTubeVideoId(result.url);
+    if (videoId) {
+      const { isNew, ...metadata } = result;
+      items[videoId] = metadata;
+    }
+  }
+
   await chrome.storage.local.set({
     youtubeBookmarkCatalog: {
       initialized: true,
       updatedAt: new Date().toISOString(),
-      videoIds: bookmarks.map((bookmark) => getYouTubeVideoId(bookmark.url)).filter(Boolean)
+      videoIds: bookmarks.map((bookmark) => getYouTubeVideoId(bookmark.url)).filter(Boolean),
+      items
     }
   });
+}
+
+function buildBookmarkOnlyMetadata(bookmark) {
+  const videoId = getYouTubeVideoId(bookmark.url);
+  return {
+    active: null,
+    title: bookmark.title || "Titolo non disponibile",
+    author: "Non verificato",
+    views: "Non verificate",
+    thumbnail: videoId ? `https://img.youtube.com/vi/${encodeURIComponent(videoId)}/mqdefault.jpg` : "",
+    description: "Metadati non recuperati per evitare blocchi anti-bot di YouTube.",
+    category: "Non verificato",
+    publishedAt: "Non verificata",
+    url: bookmark.url
+  };
 }
 
 function sortResults(results) {
@@ -171,9 +200,10 @@ async function fetchVideoMetadata(bookmark, signal) {
     const thumbnail = getBestThumbnail(details?.thumbnail?.thumbnails || microformat?.thumbnail?.thumbnails) || oEmbedData?.thumbnail_url || pageData.thumbnail || fallback.thumbnail;
     const category = microformat?.category || details?.keywords?.slice(0, 3).join(", ") || pageData.keywords || fallback.category;
     const publishedAt = microformat?.publishDate || microformat?.uploadDate || pageData.publishedAt || fallback.publishedAt;
+    const captchaDetected = /captcha|unusual traffic|sorry\/index|detected unusual/i.test(pageData.html);
     const explicitlyUnavailable = playability === "ERROR" || playability === "LOGIN_REQUIRED";
     const explicitlyPlayable = playability === "OK" || Boolean(oEmbedData?.html) || Boolean(titleFromRemote);
-    const isActive = explicitlyUnavailable ? false : pageData.ok && explicitlyPlayable;
+    const isActive = captchaDetected ? null : (explicitlyUnavailable ? false : pageData.ok && explicitlyPlayable);
 
     return {
       active: isActive,
@@ -340,7 +370,7 @@ function createResultRow(item) {
   newCell.className = item.isNew ? "new-label" : "";
 
   const activeCell = document.createElement("td");
-  activeCell.innerHTML = `<span class="dot ${item.active ? "green" : "red"}" aria-label="${item.active ? "Attivo" : "Non attivo"}" title="${item.active ? "Attivo" : "Non attivo"}"></span>`;
+  activeCell.innerHTML = `<span class="dot ${getActiveDotClass(item.active)}" aria-label="${getActiveLabel(item.active)}" title="${getActiveLabel(item.active)}"></span>`;
 
   const thumbnailCell = document.createElement("td");
   if (item.thumbnail) {
@@ -385,7 +415,7 @@ function exportHtmlReport() {
   const rows = lastResults.map((item) => `
     <tr>
       <td class="${item.isNew ? "new-label" : ""}">${item.isNew ? "New!" : ""}</td>
-      <td><span class="dot ${item.active ? "green" : "red"}" title="${item.active ? "Attivo" : "Non attivo"}"></span></td>
+      <td><span class="dot ${getActiveDotClass(item.active)}" title="${getActiveLabel(item.active)}"></span></td>
       <td>${item.thumbnail ? `<img class="thumbnail" src="${escapeAttribute(item.thumbnail)}" alt="Miniatura di ${escapeAttribute(item.title)}">` : "—"}</td>
       <td><a href="${escapeAttribute(item.url)}">${escapeHtml(item.title)}</a></td>
       <td>${escapeHtml(item.author)}</td>
@@ -400,6 +430,18 @@ function exportHtmlReport() {
   const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>Report YouTube Bookmark</title><style>${styles}</style></head><body><h1>Report YouTube Bookmark</h1><table><thead><tr><th>New!</th><th>Attivo</th><th>Miniatura</th><th>Nome video</th><th>Autore</th><th>Visualizzazioni</th><th>Tema</th><th>Descrizione</th><th>Pubblicato</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
   const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
   chrome.downloads?.download?.({ url, filename: "youtube-bookmark-report.html", saveAs: true }) || window.open(url);
+}
+
+function getActiveDotClass(active) {
+  if (active === true) return "green";
+  if (active === false) return "red";
+  return "gray";
+}
+
+function getActiveLabel(active) {
+  if (active === true) return "Attivo";
+  if (active === false) return "Non attivo";
+  return "Non verificato";
 }
 
 function escapeHtml(value) {

@@ -131,3 +131,7 @@ a {
   font-weight: 800;
   text-transform: uppercase;
 }
+
+.gray {
+  background: #9ca3af;
+}
