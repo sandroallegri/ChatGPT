@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Report video YouTube nei bookmark</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Video YouTube nei bookmark</h1>
+      <p id="summary">Apertura report: scansione automatica in corso…</p>
+      <div class="toolbar">
+        <button id="scan" type="button">Scansiona bookmark</button>
+        <button id="stop" type="button" disabled>STOP</button>
+        <button id="hydrate" type="button" disabled>Aggiorna prossimi 25</button>
+        <button id="reset" type="button">Reset catalogo</button>
+        <button id="export" type="button" disabled>Esporta HTML</button>
+      </div>
+    </header>
+
+    <section id="status" role="status" aria-live="polite"></section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>New!</th>
+          <th>Attivo</th>
+          <th>Miniatura</th>
+          <th>Nome video</th>
+          <th>Autore</th>
+          <th>Visualizzazioni</th>
+          <th>Tema</th>
+          <th>Descrizione</th>
+          <th>Pubblicato</th>
+        </tr>
+      </thead>
+      <tbody id="results">
+        <tr><td colspan="9" class="empty">Nessun risultato.</td></tr>
+      </tbody>
+    </table>
+
+    <script src="report.js"></script>
+  </body>
+</html>
