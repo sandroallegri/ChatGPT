@@ -9,6 +9,9 @@ const resultsEl = document.getElementById("results");
 
 let lastResults = [];
 let activeAbortController = null;
+const METADATA_BATCH_SIZE = 25;
+const REQUEST_DELAY_MS = 3500;
+const BATCH_PAUSE_MS = 60000;
 
 document.addEventListener("DOMContentLoaded", () => {
   scanBookmarks();
@@ -22,6 +25,7 @@ exportButton.addEventListener("click", exportHtmlReport);
 
 async function scanBookmarks() {
   activeAbortController = new AbortController();
+  let shouldStartAutomaticHydration = false;
   setBusy(true, "Lettura dei bookmark…");
   try {
     const previousCatalog = await loadCatalog();
@@ -68,6 +72,7 @@ async function scanBookmarks() {
       ? `${lastResults.length} video catalogati senza interrogare YouTube in massa. Dalla prossima scansione evidenzierò le novità.`
       : `${lastResults.length} video analizzati, ${newCount} novità, ${activeCount} attivi, ${inactiveCount} non attivi e ${unknownCount} non verificati.`;
     setStatus(activeAbortController.signal.aborted ? "Scansione interrotta." : "Scansione completata.");
+    shouldStartAutomaticHydration = !activeAbortController.signal.aborted && lastResults.some((item) => item.active === null);
   } catch (error) {
     if (error.name === "AbortError") {
       setStatus("Scansione interrotta.");
@@ -78,6 +83,7 @@ async function scanBookmarks() {
   } finally {
     setBusy(false);
     activeAbortController = null;
+    if (shouldStartAutomaticHydration) hydrateMissingMetadata();
   }
 }
 
@@ -96,7 +102,7 @@ async function saveCatalog(bookmarks, results, previousItems = {}) {
   for (const result of results) {
     const videoId = getYouTubeVideoId(result.url);
     if (videoId) {
-      const { isNew, ...metadata } = result;
+      const { isNew, blockedByYouTube, ...metadata } = result;
       const previous = previousItems[videoId];
       items[videoId] = shouldKeepPreviousMetadata(previous, metadata) ? previous : metadata;
     }
@@ -114,28 +120,58 @@ async function saveCatalog(bookmarks, results, previousItems = {}) {
 
 async function hydrateMissingMetadata() {
   activeAbortController = new AbortController();
-  setBusy(true, "Aggiornamento controllato dei metadati mancanti…");
+  setBusy(true, "Aggiornamento automatico e graduale dei metadati…");
 
   try {
-    const missingItems = lastResults
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.active === null)
-      .sort((left, right) => getHydrationTime(left.item) - getHydrationTime(right.item))
-      .slice(0, 25);
+    let processedCount = 0;
+    let removedCount = 0;
+    let blockedByYouTube = false;
+    const attemptedVideoIds = new Set();
 
-    for (let index = 0; index < missingItems.length; index += 1) {
-      if (activeAbortController.signal.aborted) break;
-      const { item, index: resultIndex } = missingItems[index];
-      setStatus(`Aggiornamento metadati ${index + 1}/${missingItems.length}: ${item.title}`);
-      lastResults[resultIndex] = { ...await fetchVideoMetadata(item, activeAbortController.signal), isNew: item.isNew, lastHydratedAt: new Date().toISOString() };
-      renderResults(sortResults(lastResults));
-      await delay(3500, activeAbortController.signal);
+    while (!activeAbortController.signal.aborted && !blockedByYouTube) {
+      const missingItems = getNextMissingItems(attemptedVideoIds);
+      if (missingItems.length === 0) break;
+
+      for (let index = 0; index < missingItems.length; index += 1) {
+        if (activeAbortController.signal.aborted) break;
+        const item = missingItems[index];
+        attemptedVideoIds.add(getYouTubeVideoId(item.url));
+        setStatus(`Aggiornamento automatico ${processedCount + 1}: ${item.title}`);
+        const metadata = await fetchVideoMetadata(item, activeAbortController.signal);
+        processedCount += 1;
+
+        if (metadata.blockedByYouTube) {
+          blockedByYouTube = true;
+          break;
+        }
+
+        if (metadata.active === false) {
+          lastResults = lastResults.filter((result) => getYouTubeVideoId(result.url) !== getYouTubeVideoId(item.url));
+          removedCount += 1;
+        } else {
+          replaceResult(item.url, { ...metadata, isNew: item.isNew, lastHydratedAt: new Date().toISOString() });
+        }
+
+        if (index < missingItems.length - 1) await delay(REQUEST_DELAY_MS, activeAbortController.signal);
+      }
+
+      lastResults = sortResults(lastResults);
+      renderResults(lastResults);
+      await persistCurrentCatalog();
+
+      if (!activeAbortController.signal.aborted && !blockedByYouTube && getNextMissingItems(attemptedVideoIds).length > 0) {
+        setStatus(`Pausa di un minuto dopo ${processedCount} aggiornamenti per ridurre il rischio CAPTCHA…`);
+        await delay(BATCH_PAUSE_MS, activeAbortController.signal);
+      }
     }
 
-    const bookmarks = lastResults.map((item) => ({ url: item.url }));
-    const previousCatalog = await loadCatalog();
-    await saveCatalog(bookmarks, lastResults, previousCatalog.items || {});
-    setStatus(activeAbortController.signal.aborted ? "Aggiornamento interrotto." : "Aggiornamento metadati completato per questo blocco.");
+    if (blockedByYouTube) {
+      setStatus(`YouTube ha richiesto una verifica anti-bot dopo ${processedCount} aggiornamenti. Processo sospeso senza segnare i video come non attivi.`);
+    } else if (activeAbortController.signal.aborted) {
+      setStatus(`Aggiornamento interrotto. Salvati ${processedCount - removedCount} video aggiornati; rimossi ${removedCount} video non raggiungibili.`);
+    } else {
+      setStatus(`Aggiornamento automatico completato. Rimossi ${removedCount} video non raggiungibili dal catalogo.`);
+    }
   } catch (error) {
     if (error.name === "AbortError") {
       setStatus("Aggiornamento interrotto.");
@@ -147,6 +183,25 @@ async function hydrateMissingMetadata() {
     setBusy(false);
     activeAbortController = null;
   }
+}
+
+function getNextMissingItems(excludedVideoIds = new Set()) {
+  return lastResults
+    .filter((item) => item.active === null && !excludedVideoIds.has(getYouTubeVideoId(item.url)))
+    .sort((left, right) => getHydrationTime(left) - getHydrationTime(right))
+    .slice(0, METADATA_BATCH_SIZE);
+}
+
+function replaceResult(url, metadata) {
+  const videoId = getYouTubeVideoId(url);
+  const resultIndex = lastResults.findIndex((result) => getYouTubeVideoId(result.url) === videoId);
+  if (resultIndex !== -1) lastResults[resultIndex] = metadata;
+}
+
+async function persistCurrentCatalog() {
+  const bookmarks = lastResults.map((item) => ({ url: item.url }));
+  const previousCatalog = await loadCatalog();
+  await saveCatalog(bookmarks, lastResults, previousCatalog.items || {});
 }
 
 async function resetCatalog() {
@@ -254,7 +309,7 @@ function dedupeByVideoId(bookmarks) {
 
 async function fetchVideoMetadata(bookmark, signal) {
   const fallback = {
-    active: false,
+    active: null,
     title: bookmark.title || "Titolo non disponibile",
     author: "Autore non disponibile",
     views: "Non disponibili",
@@ -285,7 +340,13 @@ async function fetchVideoMetadata(bookmark, signal) {
     const captchaDetected = /captcha|unusual traffic|sorry\/index|detected unusual/i.test(pageData.html);
     const explicitlyUnavailable = playability === "ERROR" || playability === "LOGIN_REQUIRED";
     const explicitlyPlayable = playability === "OK" || Boolean(oEmbedData?.html) || Boolean(titleFromRemote);
-    const isActive = captchaDetected && !oEmbedData?.html ? null : (explicitlyUnavailable ? false : pageData.ok && explicitlyPlayable);
+    const isActive = captchaDetected && !oEmbedData?.html
+      ? null
+      : explicitlyUnavailable
+        ? false
+        : pageData.ok && explicitlyPlayable
+          ? true
+          : null;
 
     return {
       active: isActive,
@@ -297,6 +358,7 @@ async function fetchVideoMetadata(bookmark, signal) {
       category: decodeHtmlEntities(category),
       publishedAt: formatDate(publishedAt),
       lastHydratedAt: new Date().toISOString(),
+      blockedByYouTube: captchaDetected && !oEmbedData?.html,
       url: bookmark.url
     };
   } catch (error) {
